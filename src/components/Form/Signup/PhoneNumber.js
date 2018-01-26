@@ -47,24 +47,22 @@ class PhoneNumber extends React.Component {
           .catch((error) => {
             this.setState({ submitting: false });
             error.response.json().then((data) => {
-              const phoneNumberError = data.errors.find(o => o.field === 'phoneNumber');
-              if (phoneNumberError) {
+              const {error} = data
+              if (error.field === 'phoneNumber') {
                 setFields({
                   phoneNumber: {
                     value: values.phoneNumber,
                     errors: [
-                      new Error(intl.formatMessage({ id: phoneNumberError.error })),
+                      new Error(intl.formatMessage({ id: error.type })),
                     ],
                   },
                 });
               }
-
-              const prefixError = data.errors.find(o => o.field === 'prefix');
-              if (prefixError) {
+              if (error.field === 'prefix') {
                 setFields({
                   prefix: {
                     value: values.prefix,
-                    errors: [new Error(intl.formatMessage({ id: prefixError.error }))],
+                    errors: [new Error(intl.formatMessage({ id: error.type }))],
                   },
                 });
               }

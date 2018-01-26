@@ -34,15 +34,13 @@ class ConfirmPhoneNumber extends React.Component {
           .catch((error) => {
             this.setState({ submitting: false });
             error.response.json().then((data) => {
-              const codeError = data.errors.find(o => o.field === 'code');
-              if (codeError) {
-                setFields({
-                  code: {
-                    value: values.code,
-                    errors: [new Error(intl.formatMessage({ id: codeError.error }))],
-                  },
-                });
-              }
+              const {error} = data
+              setFields({
+                code: {
+                  value: values.code,
+                  errors: [new Error(intl.formatMessage({ id: error.type }))],
+                },
+              });
             });
           });
       } else {

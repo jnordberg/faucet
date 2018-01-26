@@ -25,7 +25,7 @@ class Username extends React.Component {
       }
       const { intl } = this.props;
       window.usernameTimeout = setTimeout(() => {
-        apiCall('/api/check_username', {username: value}).then(() => {
+        apiCall('/api/check_username', { username: value }).then(() => {
           this.setState({ username: value });
           callback();
         }).catch((error) => {

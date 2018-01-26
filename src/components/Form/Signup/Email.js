@@ -87,11 +87,10 @@ class Email extends React.Component {
           .catch((error) => {
             this.setState({ submitting: false });
             error.response.json().then((data) => {
-              const {error} = data
               setFields({
                 email: {
                   value: values.email,
-                  errors: [new Error(intl.formatMessage({ id: error.type }))],
+                  errors: [new Error(intl.formatMessage({ id: data.error.type }))],
                 },
               });
               window.grecaptcha.reset();

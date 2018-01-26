@@ -47,13 +47,12 @@ class PhoneNumber extends React.Component {
           .catch((error) => {
             this.setState({ submitting: false });
             error.response.json().then((data) => {
-              const {error} = data
-              if (error.field === 'phoneNumber') {
+              if (data.error.field === 'phoneNumber') {
                 setFields({
                   phoneNumber: {
                     value: values.phoneNumber,
                     errors: [
-                      new Error(intl.formatMessage({ id: error.type })),
+                      new Error(intl.formatMessage({ id: data.error.type })),
                     ],
                   },
                 });

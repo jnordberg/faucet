@@ -57,10 +57,9 @@ function verifyToken(token, type) {
 }
 
 function apiMiddleware(handler) {
-  return (req, res, next) => {
+  return (req, res) => {
     handler(req, res).then((result) => {
       res.json(result);
-      next();
     }).catch((error) => {
       let err = error;
       if (!(err instanceof ApiError)) {
@@ -73,7 +72,6 @@ function apiMiddleware(handler) {
       }
       res.status(err.status);
       res.json({ error: err });
-      next();
     });
   };
 }
@@ -498,11 +496,11 @@ router.get('/approve_account', apiMiddleware(async (req) => {
 router.post('/check_username', apiMiddleware(async (req) => {
   const { username } = req.body;
   if (!username || username.length < 3) {
-    throw new ApiError('error_api_username_invalid');
+    throw new ApiError({ type: 'error_api_username_invalid' });
   }
   const accounts = await steem.api.getAccountsAsync([username]);
   if (accounts && accounts.length > 0 && accounts.find(a => a.name === username)) {
-    throw new ApiError('error_api_username_used', 'general', 200);
+    throw new ApiError({ type: 'error_api_username_used', code: 200 });
   }
   const user = await req.db.users.findOne({ where: { username, email_is_verified: true }, order: [['username_booked_at', 'DESC']] });
   const oneWeek = 7 * 24 * 60 * 60 * 1000;
@@ -510,7 +508,7 @@ router.post('/check_username', apiMiddleware(async (req) => {
     user &&
     (user.username_booked_at.getTime() + oneWeek) >= new Date().getTime()
   ) {
-    throw new ApiError('error_api_username_reserved', 'general', 200);
+    throw new ApiError({ type: 'error_api_username_reserved', code: 200 });
   }
   return { success: true };
 }));

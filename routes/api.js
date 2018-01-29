@@ -18,24 +18,37 @@ const conveyor = cloneDeep(steem);
 conveyor.api.setOptions({ url: 'https://conveyor.steemitdev.com' });
 conveyor.api.signedCall = util.promisify(conveyor.api.signedCall).bind(conveyor.api);
 
+class ApiError extends Error {
+  constructor({ type = 'error_api_general', field = 'general', status = 400, cause }) {
+    super(`${field}:${type}`);
+    this.type = type;
+    this.field = field;
+    this.status = status;
+    this.cause = cause;
+  }
+  toJSON() {
+    return { type: this.type, field: this.field };
+  }
+}
+
 async function verifyCaptcha(recaptcha, ip) {
-  const url = `https://www.google.com/recaptcha/api/siteverify?secret=${ process.env.RECAPTCHA_SECRET }&response=${recaptcha}&remoteip=${ip}`
+  const url = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET}&response=${recaptcha}&remoteip=${ip}`;
   const response = await (await fetch(url)).json();
   if (!response.success) {
-    const codes = (response['error-codes'] || ['unknown'])
-    throw new Error(`Captcha verification failed: ${ codes.join() }`)
+    const codes = (response['error-codes'] || ['unknown']);
+    throw new Error(`Captcha verification failed: ${codes.join()}`);
   }
 }
 
 function verifyToken(token, type) {
   if (!token) {
-    throw new ApiError({type: 'error_api_token_required', field: 'phoneNumber'});
+    throw new ApiError({ type: 'error_api_token_required', field: 'phoneNumber' });
   }
   let decoded;
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (cause) {
-    throw new ApiError({type: 'error_api_token_invalid', field: 'phoneNumber', cause});
+    throw new ApiError({ type: 'error_api_token_invalid', field: 'phoneNumber', cause });
   }
   if (type && decoded.type !== type) {
     throw new ApiError({ field: 'phoneNumber', type: 'error_api_token_invalid_type' });
@@ -43,46 +56,34 @@ function verifyToken(token, type) {
   return decoded;
 }
 
-class ApiError extends Error {
-
-  constructor({type = 'error_api_general', field = 'general', status = 400, cause}) {
-    super(`${ field }:${ type }`);
-    this.type = type;
-    this.field = field;
-    this.status = status;
-    this.cause = cause;
-  }
-
-  toJSON() {
-    return {type: this.type, field: this.field};
-  }
-
-}
-
 function apiMiddleware(handler) {
   return (req, res, next) => {
     handler(req, res).then((result) => {
       res.json(result);
+      next();
     }).catch((error) => {
-      if (!(error instanceof ApiError)) {
-        error = new ApiError({type: 'error_api_general', status: 500, cause: error});
+      let err = error;
+      if (!(err instanceof ApiError)) {
+        err = new ApiError({ type: 'error_api_general', status: 500, cause: err });
       }
-      if (error.status >= 500) {
-        req.log.error(error.cause || error, 'Unexpected API error')
+      if (err.status >= 500) {
+        req.log.error(err.cause || err, 'Unexpected API error');
       } else if (error.status >= 400) {
-        req.log.warn(error.cause || error, 'API Error: %s', error.type)
+        req.log.warn(err.cause || err, 'API Error: %s', err.type);
       }
-      res.status(error.status);
-      res.json({error});
-    })
-  }
+      res.status(err.status);
+      res.json({ error: err });
+      next();
+    });
+  };
 }
 
 const router = express.Router(); // eslint-disable-line new-cap
 
 
-router.get('/', apiMiddleware(async (req, res) => {
-  return {ok: true};
+router.get('/', apiMiddleware(async () => {
+  const rv = { ok: true };
+  return rv;
 }));
 
 /**
@@ -93,24 +94,24 @@ router.get('/', apiMiddleware(async (req, res) => {
  * and his account created in the Steem blockchain
  * NB: Chinese residents can't use google services so we skip the recaptcha validation for them
  */
-router.get('/request_email', apiMiddleware(async (req, res) => {
+router.get('/request_email', apiMiddleware(async (req) => {
   const location = req.geoip.get(req.ip);
   let skipRecaptcha = false;
   if (location && location.country && location.country.iso_code === 'CN') {
     skipRecaptcha = true;
   }
   if (!skipRecaptcha && !req.query.recaptcha) {
-    throw new ApiError({type: 'error_api_recaptcha_required', field: 'recaptcha'});
+    throw new ApiError({ type: 'error_api_recaptcha_required', field: 'recaptcha' });
   }
 
   if (!req.query.email) {
-    throw new ApiError({type: 'error_api_email_required', field: 'email'});
+    throw new ApiError({ type: 'error_api_email_required', field: 'email' });
   }
   if (!validator.isEmail(req.query.email)) {
-    throw new ApiError({type: 'error_api_email_format', field: 'email'});
+    throw new ApiError({ type: 'error_api_email_format', field: 'email' });
   }
   if (badDomains.includes(req.query.email.split('@')[1])) {
-    throw new ApiError({type: 'error_api_domain_blacklisted', field: 'email'});
+    throw new ApiError({ type: 'error_api_domain_blacklisted', field: 'email' });
   }
 
   const userCount = await req.db.users.count({
@@ -120,22 +121,22 @@ router.get('/request_email', apiMiddleware(async (req, res) => {
     },
   });
   if (userCount > 0) {
-    throw new ApiError({type: 'error_api_email_used', field: 'email'});
+    throw new ApiError({ type: 'error_api_email_used', field: 'email' });
   }
 
   const emailRegistered = await conveyor.api.signedCall(
     'conveyor.is_email_registered', [req.query.email],
-    conveyorAccount, conveyorKey
+    conveyorAccount, conveyorKey,
   );
   if (emailRegistered) {
-    throw new ApiError({type: 'error_api_email_used', field: 'email'});
+    throw new ApiError({ type: 'error_api_email_used', field: 'email' });
   }
 
   if (!skipRecaptcha) {
     try {
       await verifyCaptcha(req.query.recaptcha, req.ip);
     } catch (cause) {
-      throw new ApiError({type: 'error_api_recaptcha_invalid', field: 'recaptcha', cause});
+      throw new ApiError({ type: 'error_api_recaptcha_invalid', field: 'recaptcha', cause });
     }
   }
 
@@ -181,15 +182,14 @@ router.get('/request_email', apiMiddleware(async (req, res) => {
  * Checks the phone validity and use with the conveyor
  * The user can only request one code every minute to prevent flood
  */
-router.get('/request_sms', apiMiddleware(async (req, res) => {
-
+router.get('/request_sms', apiMiddleware(async (req) => {
   const decoded = verifyToken(req.query.token, 'signup');
 
   if (!req.query.phoneNumber) {
-    throw new ApiError({type: 'error_api_phone_required', field: 'phoneNumber'});
+    throw new ApiError({ type: 'error_api_phone_required', field: 'phoneNumber' });
   }
   if (!req.query.prefix) {
-    throw new ApiError({type: 'error_api_country_code_required', field: 'prefix'});
+    throw new ApiError({ type: 'error_api_country_code_required', field: 'prefix' });
   }
 
   const countryCode = req.query.prefix.split('_')[1];
@@ -199,7 +199,7 @@ router.get('/request_sms', apiMiddleware(async (req, res) => {
 
   const phoneNumber = phoneUtil.format(
     phoneUtil.parse(req.query.phoneNumber, countryCode),
-    PNF.INTERNATIONAL
+    PNF.INTERNATIONAL,
   );
   const user = await req.db.users.findOne({
     where: {
@@ -324,8 +324,7 @@ const sendAccountInformation = async (req, email) => {
  * Verify the SMS code and then ask the gatekeeper for the status of the account
  * do decide the next step
  */
-router.get('/confirm_sms', apiMiddleware(async (req, res) => {
-
+router.get('/confirm_sms', apiMiddleware(async (req) => {
   const decoded = verifyToken(req.query.token, 'signup');
 
   if (!req.query.code) {
@@ -349,8 +348,8 @@ router.get('/confirm_sms', apiMiddleware(async (req, res) => {
   }
   if (user.phone_code !== req.query.code) {
     req.db.users.update(
-      {phone_code_attempts: user.phone_code_attempts + 1},
-      {where: { email: decoded.email }}
+      { phone_code_attempts: user.phone_code_attempts + 1 },
+      { where: { email: decoded.email } },
     ).catch((error) => {
       req.log.error(error, 'Unable to update number of failed attempts');
     });
@@ -371,7 +370,7 @@ router.get('/confirm_sms', apiMiddleware(async (req, res) => {
 }));
 
 /** Return the country code using maxmind database */
-router.get('/guess_country', apiMiddleware(async (req, res) => {
+router.get('/guess_country', apiMiddleware(async (req) => {
   const location = req.geoip.get(req.ip);
   return { location };
 }));
@@ -382,11 +381,11 @@ router.get('/guess_country', apiMiddleware(async (req, res) => {
  * and initialize his username if it's still available
  * Rejected accounts are marked as pending review
  */
-router.get('/confirm_account', apiMiddleware(async (req, res) => {
+router.get('/confirm_account', apiMiddleware(async (req) => {
   const decoded = verifyToken(req.query.token, 'create_account');
   const user = await req.db.users.findOne({ where: { email: decoded.email } });
   if (!user) {
-    throw new ApiError({type: 'error_api_user_exists_not'})
+    throw new ApiError({ type: 'error_api_user_exists_not' });
   }
   if (user.status === 'manual_review' || user.status === 'rejected') {
     throw new ApiError({ type: 'error_api_account_verification_pending' });
@@ -413,13 +412,13 @@ router.get('/confirm_account', apiMiddleware(async (req, res) => {
  * Send the data to the conveyor that will store the user account
  * Remove the user information from our database
  */
-router.get('/create_account', apiMiddleware(async (req, res) => {
-  const { username, public_keys, token } = req.query;
+router.get('/create_account', apiMiddleware(async (req) => {
+  const { username, public_keys, token } = req.query; // eslint-disable-line camelcase
   const decoded = verifyToken(token, 'create_account');
   if (!username) {
     throw new ApiError({ type: 'error_api_username_required' });
   }
-  if (!public_keys) {
+  if (!public_keys) { // eslint-disable-line camelcase
     throw new ApiError({ type: 'error_api_public_keys_required' });
   }
 
@@ -463,7 +462,7 @@ router.get('/create_account', apiMiddleware(async (req, res) => {
       posting,
       publicKeys.memo,
       metadata,
-      []
+      [],
     );
   } catch (cause) {
     throw new ApiError({ type: 'error_api_create_account', cause });
@@ -471,7 +470,8 @@ router.get('/create_account', apiMiddleware(async (req, res) => {
 
   const params = [username, { phone: user.phone_number.replace(/\s*/g, ''), email: user.email }];
   conveyor.api.signedCall('conveyor.set_user_data', params, conveyorAccount, conveyorKey).then(() => {
-    return req.db.users.destroy({ where: { email: decoded.email } });
+    const rv = req.db.users.destroy({ where: { email: decoded.email } });
+    return rv;
   }).catch((error) => {
     // TODO: this should be put in a queue and retry on error
     req.log.error(error, 'Unable to store user data in conveyor');
@@ -485,7 +485,7 @@ router.get('/create_account', apiMiddleware(async (req, res) => {
  * The email allowing the users to continue the creation process is sent
  * to all approved accounts
  */
-router.get('/approve_account', apiMiddleware(async (req, res) => {
+router.get('/approve_account', apiMiddleware(async (req) => {
   const decoded = verifyToken(req.query.token);
   await Promise.all(decoded.emails.map(email => approveAccount(req, email)));
   return { success: true };
@@ -495,8 +495,8 @@ router.get('/approve_account', apiMiddleware(async (req, res) => {
  * Check the validity and blockchain availability of a username
  * Accounts created with the faucet can book a username for one week
  */
-router.post('/check_username', apiMiddleware(async (req, res) => {
-  const {username} = req.body;
+router.post('/check_username', apiMiddleware(async (req) => {
+  const { username } = req.body;
   if (!username || username.length < 3) {
     throw new ApiError('error_api_username_invalid');
   }

@@ -85,7 +85,6 @@ router.get('/', apiMiddleware(async (req, res) => {
   return {ok: true};
 }));
 
-
 /**
  * Checks for the email step
  * Recaptcha, bad domains and existence with conveyor are verified
